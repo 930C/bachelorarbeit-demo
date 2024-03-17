@@ -1,0 +1,6 @@
+apiVersion: demo.c930.net/v1alpha1
+kind: Sleep
+metadata:
+  name: sleep-sample
+spec:
+  duration: 5
