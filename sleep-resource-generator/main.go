@@ -5,14 +5,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/930c/sleep-operator/api/v1alpha1"
 	demo "github.com/930c/sleep-operator/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-)
-import (
-	"github.com/930c/sleep-operator/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 var (

@@ -8,6 +8,7 @@ require (
 )
 
 require (
+	github.com/930c/sleep-operator v0.0.0-20240317233116-3608697b4175
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
 	github.com/evanphx/json-patch/v5 v5.8.0 // indirect
