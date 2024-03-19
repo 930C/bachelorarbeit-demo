@@ -19,3 +19,5 @@
 
 # Go workspace file
 go.work
+sleep-resource-generator/kubeconfig_demo.yaml
+sleep-resource-generator/sleep-resource-generator
