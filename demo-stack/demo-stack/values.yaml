@@ -1,0 +1,4 @@
+kube-prometheus-stack:
+  enabled: true
+  namespaceOverride: "monitoring"
+  # Add any other configuration you need for Prometheus and Grafana
