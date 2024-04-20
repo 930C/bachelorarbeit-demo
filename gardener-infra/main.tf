@@ -4,10 +4,6 @@ variable "config_path" {
   description = "Kubeconfig path"
 }
 
-variable "username" {
-  type = string
-}
-
 terraform {
   required_providers {
     kubernetes = {
@@ -42,20 +38,23 @@ resource "helm_release" "kube_prometheus_stack" {
   name       = "prometheus-stack"
   repository = "https://prometheus-community.github.io/helm-charts"
   chart      = "kube-prometheus-stack"
-  version    = "57.0.3"
+  version    = "58.1.3"
+  namespace  = "monitoring"
+  create_namespace = true
 
   set {
-    name  = "namespaceOverride"
-    value = "monitoring"
-  }
-
-  set {
-    name  = "grafana.namespaceOverride"
-    value = "monitoring"
+    name = "prometheus.prometheusSpec.podMonitorSelectorNilUsesHelmValues"
+    value = false
   }
 
   set {
     name  = "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues"
     value = false
   }
+
+  set {
+    name = "prometheus.prometheusSpec.scrapeInterval"
+    value = "15s"
+  }
+  
 }

@@ -25,7 +25,7 @@ func init() {
 
 func main() {
 	// Get a config to talk to the apiserver
-	cfg, err := clientcmd.BuildConfigFromFlags("", "/home/lac/.kube/config")
+	cfg, err := clientcmd.BuildConfigFromFlags("", "/home/i549785/bachelorarbeit/kubeconfig-gardenlogin--dxp-d1--d1research.yaml")
 	if err != nil {
 		panic(err.Error())
 	}
