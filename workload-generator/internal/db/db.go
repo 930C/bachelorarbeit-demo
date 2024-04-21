@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"fmt"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
 	"github.com/930C/workload-generator/internal/utils"
 )
@@ -58,9 +57,6 @@ func NewDatabase() (*sql.DB, error) {
 
 func InsertResult(db *sql.DB, numResources int, workload simulationv1alpha1.WorkloadSpec, opSpec utils.OperatorSpec, duration float64) error {
 	_, err := db.Exec(insertResultQuery, numResources, duration, workload.SimulationType, workload.Duration, workload.Intensity, opSpec.MaxWorkerInstances, opSpec.MemoryLimit, opSpec.CPULimit, opSpec.IsSharded, opSpec.ShardCount)
-	if err != nil {
-		fmt.Println(fmt.Errorf("error inserting result: %v", err))
-	}
 	return err
 }
 

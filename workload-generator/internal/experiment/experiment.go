@@ -9,6 +9,7 @@ import (
 	"github.com/930C/workload-generator/internal/metrics"
 	"github.com/930C/workload-generator/internal/setup"
 	"github.com/930C/workload-generator/internal/utils"
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -52,24 +53,24 @@ func RunExperiment(dbConn *sql.DB) error {
 	// Launch a goroutine that cancels the context when SIGINT is detected
 	go func() {
 		<-c
-		fmt.Println("\nReceived Ctrl+C. Starting cleanup...")
+		logrus.Info("Received Ctrl+C. Starting cleanup...")
 		if err := dbConn.Close(); err != nil {
-			fmt.Printf("Database close error: %v\n", err)
+			logrus.Errorf("Database close error: %v", err)
 		}
 
 		if err := cleanupResources(ctx); err != nil {
-			fmt.Printf("Cleanup error: %v\n", err)
+			logrus.Errorf("Cleanup error: %v", err)
 		}
 
-		fmt.Println("Cleanup finished successfully. Exiting...")
+		logrus.Info("Cleanup finished successfully. Exiting...")
 		cancel()
 	}()
 
 	metricsDone := make(chan bool)
-	go metrics.FetchAndStoreMetrics(dbConn, metricsDone)
+	go metrics.FetchAndStoreMetrics(dbConn, ctx, metricsDone)
 
 	if err := experimentCycle(ctx, dbConn); err != nil {
-		fmt.Printf("Experiment error: %v\n", err)
+		logrus.Errorf("Experiment error: %v", err)
 		return err
 	}
 
@@ -78,7 +79,7 @@ func RunExperiment(dbConn *sql.DB) error {
 	// Clear the interrupt handle as we're about to exit
 	signal.Stop(c)
 
-	fmt.Println("Experiment and cleanup finished successfully.")
+	logrus.Info("Experiment and cleanup finished successfully.")
 	return nil
 }
 
@@ -88,48 +89,56 @@ func experimentCycle(ctx context.Context, dbConn *sql.DB) error {
 			WorkloadSpec.SimulationType = st
 			WorkloadSpec.Intensity = defaultIntensityMap[st]
 
-			fmt.Printf("Running %s simulation with %d intensity...\n", st, WorkloadSpec.Intensity)
+			logrus.Info("----------------------------------------")
+			logrus.Infof("Running %s simulation with %d intensity...", st, WorkloadSpec.Intensity)
 			if err := runSingleExperiment(ctx, dbConn, NumResources); err != nil {
 				return err
 			}
-
-			// Wait for 10 seconds before starting the next experiment
-			fmt.Printf("Waiting for 10 seconds before starting the next run...\n")
-			time.Sleep(10 * time.Second)
 		}
 	}
 	return nil
 }
 
 func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) error {
+
 	// Validate that the namespace is clear
 	if err := ensureNamespaceClear(ctx); err != nil {
 		return err
 	}
 
 	// Validate that the memory usage is below the threshold
-	if err := ensureEnoughMemory(ctx); err != nil {
+	if err := ensureEnoughMemory(); err != nil {
 		return err
 	}
 
 	var resourcesCreated []*simulationv1alpha1.Workload
 
-	fmt.Println("STARTING THE EXPERIMENT...")
+	// Sleep for 5 seconds before starting the experiment
+	time.Sleep(5 * time.Second)
+
+	logrus.Info("STARTING THE RUN...")
 
 	// Start time
 	startTime := time.Now()
 
 	// Iterate over the number of resources to create
 	for i := 0; i < NumResources; i++ {
+		logrus.WithFields(
+			logrus.Fields{
+				"Type":     WorkloadSpec.SimulationType,
+				"Resource": i,
+			})
+
 		workload := simulationv1alpha1.Workload{
 			Spec:       WorkloadSpec,
-			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("workload-%d", i), Namespace: "default"},
+			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("workload-%d-%s", i, strings.ToLower(WorkloadSpec.SimulationType)), Namespace: "default"},
 		}
 
 		if err := setup.K8sClient.Create(ctx, &workload); err != nil {
-			fmt.Printf("Failed to create workload: %s\n", err)
+			logrus.Errorf("Failed to create workload: %s", err)
 			continue
 		}
+		logrus.Debugf("Workload %s created", workload.Name)
 		resourcesCreated = append(resourcesCreated, &workload)
 	}
 
@@ -138,12 +147,17 @@ func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) 
 	}(resourcesCreated)
 
 	// Wait for resources to be reconciled
-	if err := waitForReconciliation(ctx, resourcesCreated); err != nil {
+	lastTransitionTime, err := waitForReconciliation(ctx, resourcesCreated)
+	if err != nil {
 		return fmt.Errorf("waiting for reconciliation: %s", err)
 	}
 
-	// Measure the time taken
-	endTime := time.Now()
+	// Convert string to time.Time
+	layout := "2006-01-02 15:04:05 -0700 MST"
+	endTime, err := time.Parse(layout, lastTransitionTime)
+	if err != nil {
+		return fmt.Errorf("failed to parse time: %s", err)
+	}
 	duration := endTime.Sub(startTime).Seconds()
 
 	// Store the result
@@ -151,7 +165,7 @@ func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) 
 		return fmt.Errorf("failed to record experiment result: %s", err)
 	}
 
-	fmt.Printf("RUN COMPLETED for %d resources with %s simulation type in %f seconds\n", NumResources, WorkloadSpec.SimulationType, duration)
+	logrus.Infof("RUN COMPLETED with %d resources as %s simulation type in %f seconds", NumResources, WorkloadSpec.SimulationType, duration)
 	return nil
 }
 
@@ -161,39 +175,45 @@ func ensureNamespaceClear(ctx context.Context) error {
 		workloads := &simulationv1alpha1.WorkloadList{}
 		err := setup.K8sClient.List(ctx, workloads)
 		if err != nil {
-			return fmt.Errorf("Failed to list workloads: %v", err)
+			return fmt.Errorf("failed to list workloads: %v", err)
 		}
 
 		if len(workloads.Items) == 0 {
 			break
 		}
 
-		fmt.Println("Namespace is not clear of workloads. Retrying in 5 seconds...")
+		logrus.Warn("Namespace is not clear of workloads. Retrying in 5 seconds...")
 		time.Sleep(5 * time.Second)
 	}
 	return nil
 }
 
-func ensureEnoughMemory(ctx context.Context) error {
+func ensureEnoughMemory() error {
 	for {
 		ok, err := metrics.CheckMemory(60) // Set memory limit here
 		if err != nil {
-			fmt.Printf("Memory check error: %v\n", err)
+			logrus.Errorf("Memory check error: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 		if ok {
 			break
 		}
-		fmt.Println("(Memory usage is too high, waiting...)")
+		logrus.Warn("Memory usage is too high, waiting...")
 		time.Sleep(5 * time.Second) // Wait 5 seconds before checking again
 	}
 	return nil
 }
 
-func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.Workload) error {
-	return wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
-		for _, workload := range workloads {
+func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.Workload) (string, error) {
+	var lastTransitionTime string
+	logrus.Debug("Waiting for workloads to be reconciled...")
+
+	// make copy of workloads
+	workloadsCopy := append([]*simulationv1alpha1.Workload(nil), workloads...)
+
+	if err := wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
+		for i, workload := range workloadsCopy {
 			updatedWorkload := &simulationv1alpha1.Workload{}
 			if err := setup.K8sClient.Get(ctx, client.ObjectKey{
 				Namespace: workload.Namespace, Name: workload.Name}, updatedWorkload); err != nil {
@@ -202,11 +222,33 @@ func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.
 			}
 			// Check if the 'Available' condition is True in the Status Conditions
 			if !isConditionTrue(updatedWorkload.Status.Conditions, "Available") {
-				return false, nil
+				continue
 			}
+			// Since it's established the workload is reconciled and available, get the lastTransitionTime
+			lastTransitionTime = getConditionTransitionTime(updatedWorkload.Status.Conditions, "Available")
+			logrus.Debugf("Workload %s is reconciled at %s", workload.Name, lastTransitionTime)
+
+			// Remove the workload from the list
+			workloadsCopy = append(workloadsCopy[:i], workloadsCopy[i+1:]...)
+			break
 		}
-		return true, nil
-	})
+		return len(workloadsCopy) == 0, nil
+	}); err != nil {
+		return "", fmt.Errorf("waiting for reconciliation: %s", err)
+	}
+
+	return lastTransitionTime, nil
+}
+
+// getConditionTransitionTime checks the list of workload conditions and returns the lastTransitionTime
+// of the given condition type.
+func getConditionTransitionTime(conditions []metav1.Condition, conditionType string) string {
+	for _, condition := range conditions {
+		if condition.Type == conditionType {
+			return condition.LastTransitionTime.String()
+		}
+	}
+	return ""
 }
 
 // isConditionTrue checks if the specific condition in the list of conditions is True.
@@ -222,11 +264,11 @@ func isConditionTrue(conditions []metav1.Condition, conditionType string) bool {
 func deleteCreatedResources(ctx context.Context, workloads []*simulationv1alpha1.Workload) {
 	for _, workload := range workloads {
 		if err := setup.K8sClient.Delete(ctx, workload); err != nil {
-			fmt.Printf("Failed to delete workload: %s\n", err)
+			logrus.Errorf("Failed to delete workload: %s", err)
 		}
 	}
 
-	fmt.Printf("Waiting for resources to be deleted...\n")
+	logrus.Info("Waiting for resources to be deleted...")
 
 	// Wait for resources to be deleted
 	err := wait.PollUntilContextCancel(ctx, 5*time.Second, true, func(ctx context.Context) (bool, error) {
@@ -239,33 +281,31 @@ func deleteCreatedResources(ctx context.Context, workloads []*simulationv1alpha1
 				}
 				return false, nil
 			}
-			if updatedWorkload.DeletionTimestamp != nil {
-				return true, nil
-			}
+			logrus.Debugf("Workload %s still exists...", workload.Name)
 		}
 		return false, nil
 	})
 	if err != nil {
-		fmt.Printf("Error waiting for deletion: %s\n", err)
+		logrus.Errorf("Error waiting for deletion: %s", err)
 		return
 	}
 
-	fmt.Println("Resources deleted successfully")
+	logrus.Info("Resources deleted successfully")
 }
 
 func cleanupResources(ctx context.Context) error {
-	fmt.Println("Starting to cleanup Workload resources...")
+	logrus.Info("Starting to cleanup Workload resources...")
 
 	workloads := &simulationv1alpha1.WorkloadList{}
 	err := setup.K8sClient.List(ctx, workloads)
 	if err != nil {
-		return fmt.Errorf("Failed to list workloads: %v", err)
+		return fmt.Errorf("failed to list workloads: %v", err)
 	}
 
 	for _, workload := range workloads.Items {
 		err = setup.K8sClient.Delete(ctx, &workload)
 		if err != nil {
-			fmt.Printf("Failed to delete workload: %v\n", err)
+			logrus.Errorf("failed to delete workload: %v", err)
 			continue
 		}
 	}

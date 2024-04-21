@@ -7,7 +7,15 @@ import (
 	"github.com/930C/workload-generator/internal/db"
 	"github.com/930C/workload-generator/internal/setup"
 	"github.com/prometheus/common/model"
+	"github.com/sirupsen/logrus"
 	"time"
+)
+
+const (
+	// Prometheus query to get CPU usage of the operator
+	cpuUsageQueryStr = "sum(rate(process_cpu_seconds_total{namespace=\"simulated-workload-operator-system\", job=\"simulated-workload-operator-controller-manager-metrics-service\"}[5s]))"
+	// Prometheus query to get memory usage of the operator
+	memoryUsageQueryStr = "sum(process_resident_memory_bytes{namespace=\"simulated-workload-operator-system\", job=\"simulated-workload-operator-controller-manager-metrics-service\"})"
 )
 
 func CheckMemory(maxK8sMemoryUsage int) (bool, error) {
@@ -34,91 +42,54 @@ func CheckMemory(maxK8sMemoryUsage int) (bool, error) {
 	return true, nil
 }
 
-func FetchAndStoreMetrics(conn *sql.DB, done <-chan bool) {
+func FetchAndStoreMetrics(conn *sql.DB, ctx context.Context, done <-chan bool) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			cpuUsage, err := collectCPUUsage()
+			cpuUsage, err := collectResourceUsage(ctx, cpuUsageQueryStr)
 			if err != nil {
-				fmt.Println(err)
+				logrus.Error("error collecting CPU usage: ", err)
 				continue
 			}
 
-			memoryUsage, err := collectMemoryUsage()
+			memoryUsage, err := collectResourceUsage(ctx, memoryUsageQueryStr)
 			if err != nil {
-				fmt.Println(err)
+				logrus.Error("error collecting memory usage: ", err)
 				continue
 			}
 
 			err = db.InsertMetric(conn, cpuUsage, memoryUsage)
 			if err != nil {
-				fmt.Println(err)
+				logrus.Error("error inserting metric: ", err)
 			}
 		case <-done:
 			// We got signal to stop, exiting the goroutine
+			logrus.Debug("Metrics goroutine received signal to stop")
 			return
 		}
 	}
 }
 
-func collectMemoryUsage() (float64, error) {
-	result, _, err := setup.PromAPI.Query(context.Background(), "sum(process_resident_memory_bytes{namespace=\"simulated-workload-operator-system\", job=\"simulated-workload-operator-controller-manager-metrics-service\"})", time.Now())
+func collectResourceUsage(ctx context.Context, queryString string) (float64, error) {
+	result, _, err := setup.PromAPI.Query(ctx, queryString, time.Now())
 	if err != nil {
-		fmt.Printf("Error querying Prometheus: %s\n", err)
-		return 0, err
+		return 0, fmt.Errorf("error querying Prometheus: %s", err)
 	}
 
 	switch v := result.(type) {
 	case model.Vector:
-		// v is of type model.Vector.
 		for _, sample := range v {
 			f64val := float64(sample.Value)
-			// Now f64val is a float64 version of each sample from your vector.
-			// You may choose to append it to some slice or use it right here.
 			return f64val, nil
 		}
 	case *model.Scalar:
-		// v is of type *model.Scalar.
 		f64val := float64(v.Value)
-		// f64val is a float64 of the scalar value.
 		return f64val, nil
 	default:
-		// v is of a different type.
-		fmt.Printf("Unexpected type %T\n", v)
+		return 0, fmt.Errorf("unexpected type %T", v)
 	}
 
-	return 0, nil
-}
-
-func collectCPUUsage() (float64, error) {
-	// Collect CPU usage from Prometheus
-	result, _, err := setup.PromAPI.Query(context.Background(), "sum(rate(process_cpu_seconds_total{namespace=\"simulated-workload-operator-system\", job=\"simulated-workload-operator-controller-manager-metrics-service\"}[5s]))", time.Now())
-	if err != nil {
-		fmt.Printf("Error querying Prometheus: %s\n", err)
-		return 0, err
-	}
-
-	switch v := result.(type) {
-	case model.Vector:
-		// v is of type model.Vector.
-		for _, sample := range v {
-			f64val := float64(sample.Value)
-			// Now f64val is a float64 version of each sample from your vector.
-			// You may choose to append it to some slice or use it right here.
-			return f64val, nil
-		}
-	case *model.Scalar:
-		// v is of type *model.Scalar.
-		f64val := float64(v.Value)
-		// f64val is a float64 of the scalar value.
-		return f64val, nil
-	default:
-		// v is of a different type.
-		fmt.Printf("Unexpected type %T\n", v)
-	}
-
-	fmt.Printf("CPU Usage: %v\n", result)
 	return 0, nil
 }

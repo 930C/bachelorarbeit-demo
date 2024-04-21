@@ -7,6 +7,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/prometheus/client_golang v1.19.0
 	github.com/prometheus/common v0.48.0
+	github.com/sirupsen/logrus v1.9.3
 	k8s.io/apimachinery v0.30.0
 	k8s.io/client-go v0.30.0
 	sigs.k8s.io/controller-runtime v0.17.3

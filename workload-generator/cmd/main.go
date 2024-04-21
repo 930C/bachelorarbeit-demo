@@ -3,12 +3,13 @@ package main
 import (
 	"database/sql"
 	"flag"
-	"fmt"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
 	"github.com/930C/workload-generator/internal/db"
 	"github.com/930C/workload-generator/internal/experiment"
 	"github.com/930C/workload-generator/internal/setup"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/sirupsen/logrus"
+	"io"
 	"k8s.io/client-go/kubernetes/scheme"
 	"os"
 )
@@ -27,28 +28,39 @@ func init() {
 
 	flag.Parse()
 	simulationv1alpha1.AddToScheme(scheme.Scheme)
+
+	logrus.SetLevel(logrus.DebugLevel)
+
+	// open an output file, this will append to the today's file if server restarted.
+	file, err := os.OpenFile("logrus.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	if err == nil {
+		mw := io.MultiWriter(os.Stdout, file)
+		logrus.SetOutput(mw)
+	} else {
+		logrus.Info("Failed to log to file, using default stderr")
+	}
 }
 
 func main() {
 	database, err := db.NewDatabase()
 	if err != nil {
-		fmt.Printf("Error setting up database: %s\n", err)
+		logrus.Errorf("Error setting up database: %s\n", err)
 		os.Exit(1)
 	}
 	defer func(database *sql.DB) {
 		err := database.Close()
 		if err != nil {
-			fmt.Printf("Error closing database: %s\n", err)
+			logrus.Errorf("Error closing database: %s\n", err)
 		}
 	}(database)
 
 	if err := setup.Setup(); err != nil {
-		fmt.Printf("Setup error: %s\n", err)
+		logrus.Errorf("Setup error: %s\n", err)
 		os.Exit(1)
 	}
 
 	if err := experiment.RunExperiment(database); err != nil {
-		fmt.Printf("Error running experiment: %s\n", err)
+		logrus.Errorf("Error running experiment: %s\n", err)
 		os.Exit(1)
 	}
 }
