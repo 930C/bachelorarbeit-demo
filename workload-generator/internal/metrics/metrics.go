@@ -34,17 +34,6 @@ func CheckMemory(maxK8sMemoryUsage int) (bool, error) {
 	return true, nil
 }
 
-func CollectMetrics() error {
-	query := "sum(rate(controller_runtime_reconcile_total{namespace=\"simulated-workload-operator-system\", job=\"simulated-workload-operator-controller-manager-experiment-service\"}[5s]))"
-	result, _, err := setup.PromAPI.Query(context.Background(), query, time.Now())
-	if err != nil {
-		return fmt.Errorf("querying Prometheus: %s", err)
-	}
-
-	fmt.Printf("Number of reconciliations completed: %v\n", result)
-	return nil
-}
-
 func FetchAndStoreMetrics(conn *sql.DB, done <-chan bool) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

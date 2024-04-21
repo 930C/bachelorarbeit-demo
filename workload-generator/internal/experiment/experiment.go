@@ -12,6 +12,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"os"
+	"os/signal"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"strings"
 	"time"
@@ -40,80 +42,152 @@ var (
 )
 
 func RunExperiment(dbConn *sql.DB) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	done := make(chan bool)
-	go metrics.FetchAndStoreMetrics(dbConn, done)
+	// Listen for SIGINT (Ctrl+C)
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
 
-	for NumResources := setup.Experiment.StartResources; NumResources <= setup.Experiment.EndResources; NumResources++ {
-		for _, WorkloadSpec.SimulationType = range strings.Split(setup.Experiment.TaskTypes, ",") {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-
-			WorkloadSpec.Intensity = defaultIntensityMap[WorkloadSpec.SimulationType]
-
-			for {
-				ok, err := metrics.CheckMemory(60) // Set memory limit here
-				if err != nil {
-					fmt.Printf("Memory check error: %v\n", err)
-					time.Sleep(5 * time.Second)
-					continue
-				}
-				if ok {
-					break
-				}
-				fmt.Println("Memory usage is too high, waiting...")
-				time.Sleep(5 * time.Second) // Wait 5 seconds before checking again
-			}
-
-			fmt.Println("Memory usage is below the threshold, STARTING THE EXPERIMENT...")
-			var resourcesCreated []*simulationv1alpha1.Workload
-
-			// Start time
-			startTime := time.Now()
-
-			// Iterate over the number of resources to create
-			for i := 0; i < NumResources; i++ {
-				workload := &simulationv1alpha1.Workload{
-					Spec:       WorkloadSpec,
-					ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("workload-%d", i), Namespace: "default"},
-				}
-
-				if err := setup.K8sClient.Create(ctx, workload); err != nil {
-					fmt.Printf("Failed to create workload: %s\n", err)
-					continue
-				}
-				resourcesCreated = append(resourcesCreated, workload)
-			}
-
-			// Wait for resources to be reconciled
-			if err := waitForReconciliation(ctx, resourcesCreated); err != nil {
-				cancel()
-				return fmt.Errorf("waiting for reconciliation: %s", err)
-			}
-
-			// Measure the time taken
-			endTime := time.Now()
-			duration := endTime.Sub(startTime).Seconds()
-
-			// Store the result
-			if err := db.InsertResult(dbConn, NumResources, WorkloadSpec, OpSpec, duration); err != nil {
-				cancel()
-				return fmt.Errorf("failed to record experiment result: %s", err)
-			}
-
-			fmt.Printf("Experiment completed for %d resources with %s simulation type in %f seconds\n", NumResources, WorkloadSpec.SimulationType, duration)
-
-			if err := metrics.CollectMetrics(); err != nil {
-				cancel()
-				return fmt.Errorf("error while collecting experiment: %s", err)
-			}
-
-			deleteCreatedResources(ctx, resourcesCreated)
-			cancel()
+	// Launch a goroutine that cancels the context when SIGINT is detected
+	go func() {
+		<-c
+		fmt.Println("\nReceived Ctrl+C. Starting cleanup...")
+		if err := dbConn.Close(); err != nil {
+			fmt.Printf("Database close error: %v\n", err)
 		}
+
+		if err := cleanupResources(ctx); err != nil {
+			fmt.Printf("Cleanup error: %v\n", err)
+		}
+
+		fmt.Println("Cleanup finished successfully. Exiting...")
+		cancel()
+	}()
+
+	metricsDone := make(chan bool)
+	go metrics.FetchAndStoreMetrics(dbConn, metricsDone)
+
+	if err := experimentCycle(ctx, dbConn); err != nil {
+		fmt.Printf("Experiment error: %v\n", err)
+		return err
 	}
 
-	done <- true
+	<-metricsDone
 
+	// Clear the interrupt handle as we're about to exit
+	signal.Stop(c)
+
+	fmt.Println("Experiment and cleanup finished successfully.")
+	return nil
+}
+
+func experimentCycle(ctx context.Context, dbConn *sql.DB) error {
+	for NumResources := setup.Experiment.StartResources; NumResources <= setup.Experiment.EndResources; NumResources++ {
+		for _, st := range strings.Split(setup.Experiment.TaskTypes, ",") {
+			WorkloadSpec.SimulationType = st
+			WorkloadSpec.Intensity = defaultIntensityMap[st]
+
+			fmt.Printf("Running %s simulation with %d intensity...\n", st, WorkloadSpec.Intensity)
+			if err := runSingleExperiment(ctx, dbConn, NumResources); err != nil {
+				return err
+			}
+
+			// Wait for 10 seconds before starting the next experiment
+			fmt.Printf("Waiting for 10 seconds before starting the next run...\n")
+			time.Sleep(10 * time.Second)
+		}
+	}
+	return nil
+}
+
+func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) error {
+	// Validate that the namespace is clear
+	if err := ensureNamespaceClear(ctx); err != nil {
+		return err
+	}
+
+	// Validate that the memory usage is below the threshold
+	if err := ensureEnoughMemory(ctx); err != nil {
+		return err
+	}
+
+	var resourcesCreated []*simulationv1alpha1.Workload
+
+	fmt.Println("STARTING THE EXPERIMENT...")
+
+	// Start time
+	startTime := time.Now()
+
+	// Iterate over the number of resources to create
+	for i := 0; i < NumResources; i++ {
+		workload := simulationv1alpha1.Workload{
+			Spec:       WorkloadSpec,
+			ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("workload-%d", i), Namespace: "default"},
+		}
+
+		if err := setup.K8sClient.Create(ctx, &workload); err != nil {
+			fmt.Printf("Failed to create workload: %s\n", err)
+			continue
+		}
+		resourcesCreated = append(resourcesCreated, &workload)
+	}
+
+	defer func(rsc []*simulationv1alpha1.Workload) {
+		deleteCreatedResources(ctx, rsc)
+	}(resourcesCreated)
+
+	// Wait for resources to be reconciled
+	if err := waitForReconciliation(ctx, resourcesCreated); err != nil {
+		return fmt.Errorf("waiting for reconciliation: %s", err)
+	}
+
+	// Measure the time taken
+	endTime := time.Now()
+	duration := endTime.Sub(startTime).Seconds()
+
+	// Store the result
+	if err := db.InsertResult(dbConn, NumResources, WorkloadSpec, OpSpec, duration); err != nil {
+		return fmt.Errorf("failed to record experiment result: %s", err)
+	}
+
+	fmt.Printf("RUN COMPLETED for %d resources with %s simulation type in %f seconds\n", NumResources, WorkloadSpec.SimulationType, duration)
+	return nil
+}
+
+func ensureNamespaceClear(ctx context.Context) error {
+	// Poll the state every 5 seconds until the namespace is clear
+	for {
+		workloads := &simulationv1alpha1.WorkloadList{}
+		err := setup.K8sClient.List(ctx, workloads)
+		if err != nil {
+			return fmt.Errorf("Failed to list workloads: %v", err)
+		}
+
+		if len(workloads.Items) == 0 {
+			break
+		}
+
+		fmt.Println("Namespace is not clear of workloads. Retrying in 5 seconds...")
+		time.Sleep(5 * time.Second)
+	}
+	return nil
+}
+
+func ensureEnoughMemory(ctx context.Context) error {
+	for {
+		ok, err := metrics.CheckMemory(60) // Set memory limit here
+		if err != nil {
+			fmt.Printf("Memory check error: %v\n", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+		if ok {
+			break
+		}
+		fmt.Println("(Memory usage is too high, waiting...)")
+		time.Sleep(5 * time.Second) // Wait 5 seconds before checking again
+	}
 	return nil
 }
 
@@ -177,4 +251,23 @@ func deleteCreatedResources(ctx context.Context, workloads []*simulationv1alpha1
 	}
 
 	fmt.Println("Resources deleted successfully")
+}
+
+func cleanupResources(ctx context.Context) error {
+	fmt.Println("Starting to cleanup Workload resources...")
+
+	workloads := &simulationv1alpha1.WorkloadList{}
+	err := setup.K8sClient.List(ctx, workloads)
+	if err != nil {
+		return fmt.Errorf("Failed to list workloads: %v", err)
+	}
+
+	for _, workload := range workloads.Items {
+		err = setup.K8sClient.Delete(ctx, &workload)
+		if err != nil {
+			fmt.Printf("Failed to delete workload: %v\n", err)
+			continue
+		}
+	}
+	return nil
 }
