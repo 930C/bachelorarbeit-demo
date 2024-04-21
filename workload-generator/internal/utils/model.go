@@ -7,3 +7,10 @@ type OperatorSpec struct {
 	IsSharded          bool
 	ShardCount         int
 }
+
+type ExperimentSpec struct {
+	StartResources int
+	EndResources   int
+	TaskTypes      string
+	OpSpec         OperatorSpec
+}

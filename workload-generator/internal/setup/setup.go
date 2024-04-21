@@ -2,6 +2,7 @@ package setup
 
 import (
 	"fmt"
+	"github.com/930C/workload-generator/internal/utils"
 	promapi "github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -14,6 +15,7 @@ var (
 	PrometheusURL string
 	K8sClient     client.Client
 	PromAPI       v1.API
+	Experiment    utils.ExperimentSpec
 )
 
 func Setup() error {

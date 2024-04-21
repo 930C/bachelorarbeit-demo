@@ -25,6 +25,17 @@ const (
 	insertResultQuery = `INSERT INTO results
 	(num_resources, duration_seconds, workload_type, workload_duration, workload_intensity, max_worker_instances, memory_limit, cpu_limit, is_sharded, shard_count)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	createMetricsTableQuery = `CREATE TABLE IF NOT EXISTS metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cpu_usage FLOAT,
+        memory_usage FLOAT,
+        metric_time DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`
+
+	insertMetricQuery = `INSERT INTO metrics
+    (cpu_usage, memory_usage)
+    VALUES (?, ?)`
 )
 
 // NewDatabase creates a new database connection and returns it
@@ -38,6 +49,10 @@ func NewDatabase() (*sql.DB, error) {
 		return nil, err
 	}
 
+	if _, err = db.Exec(createMetricsTableQuery); err != nil {
+		return nil, err
+	}
+
 	return db, nil
 }
 
@@ -46,5 +61,11 @@ func InsertResult(db *sql.DB, numResources int, workload simulationv1alpha1.Work
 	if err != nil {
 		fmt.Println(fmt.Errorf("error inserting result: %v", err))
 	}
+	return err
+}
+
+// InsertMetric inserts a metric into the metrics table
+func InsertMetric(db *sql.DB, cpuUsage float64, memoryUsage float64) error {
+	_, err := db.Exec(insertMetricQuery, cpuUsage, memoryUsage)
 	return err
 }
