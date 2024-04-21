@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/db"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/metrics"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/setup"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/utils"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
-	"github.com/930C/workload-generator/internal/db"
-	"github.com/930C/workload-generator/internal/metrics"
-	"github.com/930C/workload-generator/internal/setup"
-	"github.com/930C/workload-generator/internal/utils"
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -116,10 +116,9 @@ func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) 
 	// Sleep for 5 seconds before starting the experiment
 	time.Sleep(5 * time.Second)
 
-	logrus.Info("STARTING THE RUN...")
-
-	// Start time
 	startTime := time.Now()
+
+	logrus.Info("STARTING THE RUN...")
 
 	// Iterate over the number of resources to create
 	for i := 0; i < NumResources; i++ {
@@ -147,17 +146,11 @@ func runSingleExperiment(ctx context.Context, dbConn *sql.DB, NumResources int) 
 	}(resourcesCreated)
 
 	// Wait for resources to be reconciled
-	lastTransitionTime, err := waitForReconciliation(ctx, resourcesCreated)
+	endTime, err := waitForReconciliation(ctx, resourcesCreated)
 	if err != nil {
 		return fmt.Errorf("waiting for reconciliation: %s", err)
 	}
 
-	// Convert string to time.Time
-	layout := "2006-01-02 15:04:05 -0700 MST"
-	endTime, err := time.Parse(layout, lastTransitionTime)
-	if err != nil {
-		return fmt.Errorf("failed to parse time: %s", err)
-	}
 	duration := endTime.Sub(startTime).Seconds()
 
 	// Store the result
@@ -205,8 +198,9 @@ func ensureEnoughMemory() error {
 	return nil
 }
 
-func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.Workload) (string, error) {
-	var lastTransitionTime string
+func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.Workload) (time.Time, error) {
+	const nanoSecondsLayout = "2006-01-02T15:04:05.999999999Z07:00"
+	var endTime time.Time
 	logrus.Debug("Waiting for workloads to be reconciled...")
 
 	// make copy of workloads
@@ -224,9 +218,15 @@ func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.
 			if !isConditionTrue(updatedWorkload.Status.Conditions, "Available") {
 				continue
 			}
+
+			//get the first startTime from workload status
+			//if i == 0 {
+			//	startTime, _ = time.Parse(nanoSecondsLayout, updatedWorkload.Status.StartTime)
+			//}
+
 			// Since it's established the workload is reconciled and available, get the lastTransitionTime
-			lastTransitionTime = getConditionTransitionTime(updatedWorkload.Status.Conditions, "Available")
-			logrus.Debugf("Workload %s is reconciled at %s", workload.Name, lastTransitionTime)
+			endTime, _ = time.Parse(nanoSecondsLayout, updatedWorkload.Status.EndTime)
+			logrus.Debugf("Workload %s is reconciled at %s", workload.Name, endTime)
 
 			// Remove the workload from the list
 			workloadsCopy = append(workloadsCopy[:i], workloadsCopy[i+1:]...)
@@ -234,10 +234,10 @@ func waitForReconciliation(ctx context.Context, workloads []*simulationv1alpha1.
 		}
 		return len(workloadsCopy) == 0, nil
 	}); err != nil {
-		return "", fmt.Errorf("waiting for reconciliation: %s", err)
+		return time.Time{}, fmt.Errorf("waiting for reconciliation: %s", err)
 	}
 
-	return lastTransitionTime, nil
+	return endTime, nil
 }
 
 // getConditionTransitionTime checks the list of workload conditions and returns the lastTransitionTime

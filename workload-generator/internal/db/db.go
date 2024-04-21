@@ -2,8 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/utils"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
-	"github.com/930C/workload-generator/internal/utils"
 )
 
 const (

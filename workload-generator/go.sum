@@ -1,5 +1,7 @@
-github.com/930C/simulated-workload-operator v0.0.0-20240417105434-1e3f12b40668 h1:i0Gzs2/H/GzAaJEQIPhT9XB+Xo0nVaEv3sZiMaBAook=
-github.com/930C/simulated-workload-operator v0.0.0-20240417105434-1e3f12b40668/go.mod h1:X8sarb4b8Ihr+U4IzbUJ7r7/ovomRDYPWtIj8mKbt5k=
+github.com/930C/simulated-workload-operator v0.0.0-20240421214526-8d0cb266df87 h1:MInQi580N5mstC/4XQuSMinJTgEHhHe+rVrogSZge9s=
+github.com/930C/simulated-workload-operator v0.0.0-20240421214526-8d0cb266df87/go.mod h1:X8sarb4b8Ihr+U4IzbUJ7r7/ovomRDYPWtIj8mKbt5k=
+github.com/930C/simulated-workload-operator v0.0.0-20240421224201-37451e1e5b61 h1:Q5CT7uVKOoFk9UgVW9xf9AhIe3iCpXcrFl8c++0PXOs=
+github.com/930C/simulated-workload-operator v0.0.0-20240421224201-37451e1e5b61/go.mod h1:I2u3Qw9puANgRcfU1wA8r9xUmd2/wwwfkWxxYn0CCPE=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/cespare/xxhash/v2 v2.2.0 h1:DC2CZ1Ep5Y4k3ZQ899DldepgrayRUGE6BBZ/cd9Cj44=

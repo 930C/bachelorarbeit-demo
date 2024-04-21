@@ -2,7 +2,7 @@ package setup
 
 import (
 	"fmt"
-	"github.com/930C/workload-generator/internal/utils"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/utils"
 	promapi "github.com/prometheus/client_golang/api"
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"k8s.io/client-go/kubernetes/scheme"

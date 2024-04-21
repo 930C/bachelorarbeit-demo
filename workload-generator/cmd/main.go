@@ -3,10 +3,10 @@ package main
 import (
 	"database/sql"
 	"flag"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/db"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/experiment"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/setup"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
-	"github.com/930C/workload-generator/internal/db"
-	"github.com/930C/workload-generator/internal/experiment"
-	"github.com/930C/workload-generator/internal/setup"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
 	"io"
@@ -18,7 +18,7 @@ func init() {
 	flag.StringVar(&setup.Kubeconfig, "kubeconfig", "", "path to Kubernetes config file")
 	flag.StringVar(&setup.PrometheusURL, "prometheus-url", "http://127.0.0.1:9090", "URL to reach Prometheus")
 	flag.IntVar(&setup.Experiment.StartResources, "startres", 1, "Starting number of resources")
-	flag.IntVar(&setup.Experiment.EndResources, "endres", 5, "Ending number of resources")
+	flag.IntVar(&setup.Experiment.EndResources, "endres", 10, "Ending number of resources")
 	flag.StringVar(&setup.Experiment.TaskTypes, "tasks", "cpu,memory,io,sleep", "Types of tasks to run (comma separated)")
 	flag.IntVar(&setup.Experiment.OpSpec.CPULimit, "cpulimit", 500, "CPU limit for tasks")
 	flag.IntVar(&setup.Experiment.OpSpec.MemoryLimit, "memlimit", 128, "Memory limit for tasks")
