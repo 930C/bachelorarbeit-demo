@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/db"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/environment"
 	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/experiment"
-	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/setup"
+	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/metrics"
 	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/sirupsen/logrus"
@@ -14,20 +16,34 @@ import (
 	"os"
 )
 
+var (
+	envKubeconfig    string
+	envPrometheusURL string
+	ExperimentRunner experiment.Runner
+)
+
 func init() {
-	flag.StringVar(&setup.Kubeconfig, "kubeconfig", "", "path to Kubernetes config file")
-	flag.StringVar(&setup.PrometheusURL, "prometheus-url", "http://127.0.0.1:9090", "URL to reach Prometheus")
-	flag.IntVar(&setup.Experiment.StartResources, "startres", 1, "Starting number of resources")
-	flag.IntVar(&setup.Experiment.EndResources, "endres", 10, "Ending number of resources")
-	flag.StringVar(&setup.Experiment.TaskTypes, "tasks", "cpu,memory,io,sleep", "Types of tasks to run (comma separated)")
-	flag.IntVar(&setup.Experiment.OpSpec.CPULimit, "cpulimit", 500, "CPU limit for tasks")
-	flag.IntVar(&setup.Experiment.OpSpec.MemoryLimit, "memlimit", 128, "Memory limit for tasks")
-	flag.IntVar(&setup.Experiment.OpSpec.MaxWorkerInstances, "maxworkers", 1, "Maximum number of worker instances")
-	flag.BoolVar(&setup.Experiment.OpSpec.IsSharded, "sharded", false, "Whether to shard the database")
-	flag.IntVar(&setup.Experiment.OpSpec.ShardCount, "shardcount", 0, "Number of shards")
+	flag.StringVar(&envKubeconfig, "kubeconfig", "", "path to Kubernetes config file")
+	flag.StringVar(&envPrometheusURL, "prometheus-url", "http://127.0.0.1:9090", "URL to reach Prometheus")
+
+	flag.IntVar(&ExperimentRunner.Spec.StartResources, "startres", 11, "Starting number of resources")
+	flag.IntVar(&ExperimentRunner.Spec.EndResources, "endres", 50, "Ending number of resources")
+	flag.IntVar(&ExperimentRunner.Spec.Steps, "steps", 1, "Number of steps each resource")
+
+	flag.StringVar(&ExperimentRunner.WorkloadSpec.SimulationType, "task", "io", "Type of tasks to run (io, cpu, memory, sleep)")
+	flag.IntVar(&ExperimentRunner.WorkloadSpec.Intensity, "intensity", 15, "Intensity of the Experiment")
+	flag.IntVar(&ExperimentRunner.WorkloadSpec.Duration, "duration", 10, "Duration of each Workloads")
+
+	flag.IntVar(&ExperimentRunner.OperatorSpec.CPULimit, "cpulimit", 500, "CPU limit for tasks")
+	flag.IntVar(&ExperimentRunner.OperatorSpec.MemoryLimit, "memlimit", 128, "Memory limit for tasks")
+	flag.IntVar(&ExperimentRunner.OperatorSpec.MaxWorkerInstances, "maxworkers", 1, "Maximum number of worker instances")
+	flag.IntVar(&ExperimentRunner.OperatorSpec.ShardCount, "shardcount", 3, "Number of shards (0 means no sharding)")
 
 	flag.Parse()
-	simulationv1alpha1.AddToScheme(scheme.Scheme)
+	err := simulationv1alpha1.AddToScheme(scheme.Scheme)
+	if err != nil {
+		return
+	}
 
 	logrus.SetLevel(logrus.DebugLevel)
 
@@ -42,7 +58,12 @@ func init() {
 }
 
 func main() {
-	database, err := db.NewDatabase()
+	var err error
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ExperimentRunner.DbConn, err = db.NewDatabase()
 	if err != nil {
 		logrus.Errorf("Error setting up database: %s\n", err)
 		os.Exit(1)
@@ -52,15 +73,20 @@ func main() {
 		if err != nil {
 			logrus.Errorf("Error closing database: %s\n", err)
 		}
-	}(database)
+	}(ExperimentRunner.DbConn)
 
-	if err := setup.Setup(); err != nil {
-		logrus.Errorf("Setup error: %s\n", err)
+	ExperimentRunner.Env, err = environment.NewEnvironment(envKubeconfig, envPrometheusURL)
+	if err != nil {
+		logrus.Errorf("Error creating environment: %s\n", err)
 		os.Exit(1)
 	}
 
-	if err := experiment.RunExperiment(database); err != nil {
+	go metrics.FetchAndStoreMetrics(ctx, ExperimentRunner.DbConn, ExperimentRunner.Env.PromAPI)
+
+	if err := ExperimentRunner.Run(ctx); err != nil {
 		logrus.Errorf("Error running experiment: %s\n", err)
 		os.Exit(1)
 	}
+
+	cancel() // trigger cancellation of context when experiment is done
 }

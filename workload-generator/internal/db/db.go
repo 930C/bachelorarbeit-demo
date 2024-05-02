@@ -2,8 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"github.com/930C/bachelorarbeit-demo/workload-generator/internal/utils"
-	simulationv1alpha1 "github.com/930C/simulated-workload-operator/api/v1alpha1"
 )
 
 const (
@@ -17,13 +15,12 @@ const (
 	max_worker_instances INTEGER,
 	memory_limit INTEGER,
 	cpu_limit INTEGER,
-	is_sharded INTEGER,
 	shard_count INTEGER,
 	experiment_time DATETIME DEFAULT CURRENT_TIMESTAMP)`
 
-	insertResultQuery = `INSERT INTO results
-	(num_resources, duration_seconds, workload_type, workload_duration, workload_intensity, max_worker_instances, memory_limit, cpu_limit, is_sharded, shard_count)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	InsertResultQuery = `INSERT INTO results
+	(num_resources, duration_seconds, workload_type, workload_duration, workload_intensity, max_worker_instances, memory_limit, cpu_limit, shard_count)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	createMetricsTableQuery = `CREATE TABLE IF NOT EXISTS metrics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,6 +28,15 @@ const (
         memory_usage FLOAT,
         metric_time DATETIME DEFAULT CURRENT_TIMESTAMP
     )`
+
+	createMetricsTable = `
+	CREATE TABLE IF NOT EXISTS metrics (
+	    id INTEGER PRIMARY KEY AUTOINCREMENT,
+	    time DATETIME,
+	    pod TEXT,
+	    type TEXT,
+	    value FLOAT
+	                                   )`
 
 	insertMetricQuery = `INSERT INTO metrics
     (cpu_usage, memory_usage)
@@ -48,20 +54,9 @@ func NewDatabase() (*sql.DB, error) {
 		return nil, err
 	}
 
-	if _, err = db.Exec(createMetricsTableQuery); err != nil {
+	if _, err = db.Exec(createMetricsTable); err != nil {
 		return nil, err
 	}
 
 	return db, nil
-}
-
-func InsertResult(db *sql.DB, numResources int, workload simulationv1alpha1.WorkloadSpec, opSpec utils.OperatorSpec, duration float64) error {
-	_, err := db.Exec(insertResultQuery, numResources, duration, workload.SimulationType, workload.Duration, workload.Intensity, opSpec.MaxWorkerInstances, opSpec.MemoryLimit, opSpec.CPULimit, opSpec.IsSharded, opSpec.ShardCount)
-	return err
-}
-
-// InsertMetric inserts a metric into the metrics table
-func InsertMetric(db *sql.DB, cpuUsage float64, memoryUsage float64) error {
-	_, err := db.Exec(insertMetricQuery, cpuUsage, memoryUsage)
-	return err
 }
